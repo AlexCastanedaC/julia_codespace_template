@@ -4,7 +4,7 @@ using .legendreExpansion
 
 # Generate Legendre polynomials up to degree 5
 n = 5
-x = collect(-1:0.01:1)
+x = -1:0.01:1
 legendrePolys = lp_gen_eval(n, x)
 # Plot the Legendre polynomials
 

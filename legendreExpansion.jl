@@ -6,10 +6,10 @@ export lp_gen_eval, leg_coeff_arr, series_expansion
 
 # Function that generates Legendre polynomials up to nth degree based on existing array from -1 to 1
 
-function lp_gen_eval(n::Int, x::Vector{Float64})
+function lp_gen_eval(n::Int64, x::AbstractRange)
     legPoly = Vector{Vector{Float64}}(undef, n + 1)
     legPoly[1] = ones(Float64, length(x))
-    legPoly[2] = x
+    legPoly[2] = collect(x)
 
     for k in 2:n
         c1 = (2.0 * k - 1) / k

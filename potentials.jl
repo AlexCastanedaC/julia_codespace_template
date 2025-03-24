@@ -1,7 +1,12 @@
 module potentials
 
-export screenedCoulomb, softSphere
+export screenedCoulomb, softSphere, yukawa
 # screened Coulomb potential
+
+# Yukawa potential
+function yukawa(r, λ::Float64, A::Float64)
+	return (A / r) * exp(- r / λ)
+end
 
 function screenedCoulomb(r, A::Number, kappa::Number, alpha::Number)
 	return alpha * A * f_exp(alpha * r) * exp(-1.0 * kappa * r)

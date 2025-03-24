@@ -11,9 +11,11 @@ function simps_arr(y::Vector, x::Vector)
 	return h/3.0 *s
 end
 
-function inner_product(f1::Vector, f2::Vector, x::Vector)
+using Romberg
+
+function inner_product(f1::Vector, f2::Vector, x::AbstractRange)
 	integrand = f1 .* f2
-	return simps_arr(integrand, x)
+	return romberg(x, integrand)[1]
 end
 
 end

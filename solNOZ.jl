@@ -1,53 +1,48 @@
-include("testFunctions.jl")
-using .testFunctions
+module solNOZ
 
-r_layers = [100.0, 150.0]
-num_per_layer = [10.0, 15.0]
+export r_layers, n_per_layer
+# This script contains the necessary functions to solve the OZ inhomogeneous equation
+# by using the NG method. The idea is to turn the density ρ(r) into N spherical layers, each containing
+# ρ(r) = ρ_i for r_i < r < r_{i+1} where ρ_i is a constant density in the layer i.
 
-# number of spherical layers
-n = length(r_layers)
-# x \in [-1.0, 1.0]
-
-x = collect(range(-1.0, 1.0, length = 50001))
-r = Array{Float64, 3}(undef, n, n, length(x))
-
-using LinearAlgebra
-N = diagm(num_per_layer)
-
-for i in 1:n
-	for j in 1:n
-		r[i, j, :] = dist.(x, r_layers[i], r_layers[j])
-	end
+# Function to calculate the radius of each layer, which takes the following parameters:
+# 1. Number of layers n
+# 2. cutoff radius r_cut
+function r_layers(n::Int64, r_cut::Float64)
+	Δr = r_cut / (2*n)
+	r_lay = [(2*i-1)*Δr for i in 1:n]
+	return Δr, r_lay
 end
 
+# function to calculate number of particles per layer, taking as input the following parameters:
+# 1. ρ(r) as a function of r (which will be defined in the main.jl file)
+# 2. r_layers array
+# 3. Δr
 
-include("potentials.jl")
-using .potentials
+using Romberg
 
-A = 2000.0
-kappa = 1.0 / 288.0
-alpha = 10.0
-u = similar(r)
-u = screenedCoulomb.(r, A, kappa, alpha)
+function n_per_layer(ρ::Function, r_layers::Vector{Float64}, Δr::Float64)
+	n = length(r_layers)
+	n_per_layer = zeros(n)
 
-include("bridges.jl")
-using .bridges
-bridge = bridge_HNC(r)
-
-# we will now evaluate the Legendre Polynomials using our x values
-include("legendreExpansion.jl")
-using .legendreExpansion.legendrePolynomials
-n_lP = 120 
-lP = lp_gen_eval(n_lP, x)
-println("LegPol evaluated")
-
-using .legendreExpansion.functionExpansion
+	# for the moment, this is arbitrary
+	int_spacing = Δr/100
+	
+	for i in 1:n
+		r = (r_layers[i] - Δr):int_spacing:(r_layers[i] + Δr)
+		integrand = ρ.(r) .* r.^2
+		n_per_layer[i] = 4 * pi * romberg(r, integrand)[1]
+	end
+	return n_per_layer
+end
+#=
+using .legendreExpansion
 include("mathTools.jl")
 using .mathTools
 
-function simpleIter(n::Number, n_lP::Number,x::Vector{Float64}, N::Matrix{Float64}, gamma_0::AbstractArray, u::AbstractArray, bridge::AbstractArray, lP::AbstractArray)
+function simpleIter(n::Number, n_lP::Number,x::AbstractRange, N::Matrix{Float64}, gamma_0::AbstractArray, u::AbstractArray, bridge::AbstractArray, lP::AbstractArray)
 	c_dir = exp.(-1.0 .* u .+ gamma_0 .+ bridge) .- gamma_0 .- 1.0
-        c_l_coeff = [leg_coeff_arr(x, c_dir[i, j, :], lP) for i in 1:n, j in 1:n]
+    c_l_coeff = [leg_coeff_arr(x, c_dir[i, j, :], lP) for i in 1:n, j in 1:n]
 	c_l_matrix = zeros(n, n, n_lP + 1)
 	for i in 1:n, j in 1:n
 		c_l_matrix[i, j, :] .= c_l_coeff[i, j]
@@ -71,7 +66,7 @@ function simpleIter(n::Number, n_lP::Number,x::Vector{Float64}, N::Matrix{Float6
 	return gamma_new
 end
 
-function inner_product_M(A::Array, B::Array,x::Vector)
+function inner_product_M(A::Array, B::Array,x::AbstractRange)
 	shape_Array = size(A)
 	n = shape_Array[1]
 	sum = 0.0
@@ -83,34 +78,8 @@ function inner_product_M(A::Array, B::Array,x::Vector)
 	return sum
 end
 
-function alpha_solve(n::Int64,n_lP::Int64,x::Vector{Float64}, N::Matrix{Float64}, u::AbstractArray, bridge::AbstractArray, initial_gamma::AbstractArray, legendrePol)
-	tol = 100.0
-	count = 0
-	alpha = 0.1
-
-	gamma_iter = initial_gamma
-
-	while tol > 1e-6
-		gamma = simpleIter(n, n_lP,x, N, gamma_iter, u, bridge, legendrePol)
-		gamma = alpha .* gamma .+ (1.0 - alpha) .* gamma_iter
-
-		diff = gamma .- gamma_iter
-
-		tol = sqrt(inner_product_M(diff, diff, x))
-
-		gamma_iter = gamma
-
-		count += 1
-
-		println("count = $count, Tol = $tol")
-	end
-
-	return gamma_iter
-
-end
-
 # Define the function to compute corrections and Matrix D
-function compute_D(d_n::Vector, x::Vector)
+function compute_D(d_n::Vector, x::AbstractRange)
 	#Calculate the differences d
 	n = length(d_n)
 	d = [d_n[end] - d_n[end-i] for i in 1:(n-1)]
@@ -137,83 +106,36 @@ function ng_solve(n::Int64,n_lP::Int64,x::Vector{Float64}, N::Matrix{Float64}, u
 		for j in 1:5
 			push!(gamma,simpleIter(n, n_lP,x, N, gamma[i + j],u, bridge, legendrePol))
 		end
-	# Extend g with the last three elements of gamma
-	append!(g, gamma[end-4:end])
+		# Extend g with the last three elements of gamma
+		append!(g, gamma[end-4:end])
     	# Compute differences d_n
-	d_n = [g[i + k] .- gamma[i + k] for k in 1:5]
-	# println(d_n[2][1,1,:])
-	# Compute D and d_vec
-	D, d_vec = compute_D(d_n, x)
-	# Solve for c using linear algebra
-	c = D \ d_vec
-	# Calculate sum_g
-	sum_g = zeros(size(g[end]))
-	for j in 1:4
-		sum_g .+= c[j] .* g[end-j]
-	end
-	# Compute f_n1
-	f_n1 = (1 - sum(c)) .* g[end] .+ sum_g
-	# Calculate difference d_n2
-	d_n2 = f_n1 .- g[end]
-	# Update tolerance
-	tol_Ng = sqrt(inner_product_M(d_n2, d_n2, x))
-	# Update the last element of gamma
-	gamma[end] = f_n1
-	# Increment counters
-	i += 5
-	l += 1
-	println("l = $l, Tol = $tol_Ng")
-        end
-
+		d_n = [g[i + k] .- gamma[i + k] for k in 1:5]
+		# println(d_n[2][1,1,:])
+		# Compute D and d_vec
+		D, d_vec = compute_D(d_n, x)
+		# Solve for c using linear algebra
+		c = D \ d_vec
+		# Calculate sum_g
+		sum_g = zeros(size(g[end]))
+		for j in 1:4
+			sum_g .+= c[j] .* g[end-j]
+		end
+		# Compute f_n1
+		f_n1 = (1 - sum(c)) .* g[end] .+ sum_g
+		# Calculate difference d_n2
+		d_n2 = f_n1 .- g[end]
+		# Update tolerance
+		tol_Ng = sqrt(inner_product_M(d_n2, d_n2, x))
+		# Update the last element of gamma
+		gamma[end] = f_n1
+		# Increment counters
+		i += 5
+		l += 1
+		println("l = $l, Tol = $tol_Ng")
+    end
 	return gamma[end]
 
 end
-
-gamma_0 = zeros(size(r)) 
- 
-w = collect(range(0.1,1,length=30))
-
-for (i,w_val) in pairs(w)
-gamma = ng_solve(n, n_lP,x, N, w_val .* u, bridge,gamma_0, lP)
-println("Factor $i")
-global gamma_0 = gamma
-end
-
-c_f = exp.(-u .+ gamma_0 .+ bridge) .- gamma_0 .- 1.0
-g_theta = gamma_0 .+ c_f .+ 1.0
-for i in 1:n, j in 1:n
-	reverse!(g_theta[i,j,:])
-end
-
-#reverse!(x)
-theta = acos.(x) ./ pi .* 180.0
-
-using Plots
-
-plot()
-
-for i in 1:n, j in 1:n
-	plot!(theta,g_theta[i,j,:]; ls=:auto, label="g$i$j")
-end
-
-plot!(;plot_title = "PCF", legend=:topright,dpi = 300)
-
-savefig("pcf_2layers.png")
-
-#=
-using DataFrames
-
-c_0 = exp.(-u[1,2,:] .+ gamma_0[1,2,:] .+ bridge[1,2,:]) .- gamma_0[1,2,:] .- 1
-
-h_0 = gamma_0[1,2,:] .+ c_0
-
-g_0 = h_0 .+ 1.0
-gamma_coeff = leg_coeff_arr(x, gamma_0[1,2,:], lP)
-
-h_coeff = leg_coeff_arr(x, h_0, lP)
-
-g_coeff = leg_coeff_arr(x, g_0, lP)
-
-df = DataFrame(gamma_l = gamma_coeff, h_l = h_coeff, g_l = g_coeff)
-println(df)
 =#
+# end module
+end
